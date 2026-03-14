@@ -116,7 +116,7 @@ For detailed setup instructions, see [docs/AUTOMATED_DATA_REFRESH.md](docs/AUTOM
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/moshesham/Economic-Dashboard.git
+git clone https://github.com/rahulpandey00/Economic-Dashboard.git
 cd Economic-Dashboard
 
 # 2. Create virtual environment
@@ -281,9 +281,8 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <div align="center">
 
-**Moshe Sham**
+**Rahul Pandey**
 
-[![GitHub](https://img.shields.io/badge/GitHub-moshesham-181717?style=flat-square&logo=github)](https://github.com/moshesham)
 
 </div>
 
