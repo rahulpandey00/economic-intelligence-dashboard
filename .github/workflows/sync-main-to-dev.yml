@@ -1,0 +1,106 @@
+name: Sync Main to Dev
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sync-main-to-dev:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Check if dev branch exists
+      id: check_dev
+      run: |
+        if git ls-remote --heads origin dev | grep -q dev; then
+          echo "dev_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "dev_exists=false" >> $GITHUB_OUTPUT
+          echo "Dev branch does not exist"
+        fi
+
+    - name: Check for changes to sync
+      if: steps.check_dev.outputs.dev_exists == 'true'
+      id: check_changes
+      run: |
+        git fetch origin main dev
+        
+        # Check if there are commits in main that aren't in dev
+        # Use merge-base to find the common ancestor and compare
+        MERGE_BASE=$(git merge-base origin/main origin/dev)
+        MAIN_HEAD=$(git rev-parse origin/main)
+        
+        if [ "$MERGE_BASE" = "$MAIN_HEAD" ]; then
+          echo "Main is fully merged into dev - no sync needed"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "diff_count=0" >> $GITHUB_OUTPUT
+        else
+          # Count commits in main that aren't in dev
+          DIFF_COUNT=$(git rev-list --count origin/dev..origin/main)
+          echo "diff_count=$DIFF_COUNT" >> $GITHUB_OUTPUT
+          
+          if [ "$DIFF_COUNT" -eq "0" ]; then
+            echo "No commits to sync from main to dev"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+          else
+            echo "$DIFF_COUNT commits to sync from main to dev"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+          fi
+        fi
+
+    - name: Create sync PR
+      if: steps.check_dev.outputs.dev_exists == 'true' && steps.check_changes.outputs.has_changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        branch: sync/main-to-dev-${{ github.run_number }}
+        base: dev
+        title: "🔄 Sync Main to Dev"
+        body: |
+          ## Sync Summary
+          
+          This PR syncs changes from `main` (production) back to `dev`.
+          
+          This is typically done to:
+          - Incorporate hotfixes made directly to production
+          - Keep dev branch up-to-date with production
+          
+          ### Commits to Sync
+          - ${{ steps.check_changes.outputs.diff_count }} commits from main
+          
+          ### Workflow Run
+          - Run ID: ${{ github.run_id }}
+          - Triggered by: ${{ github.event_name }}
+          
+          ---
+          ⚠️ **Review for any merge conflicts before merging.**
+        labels: |
+          sync
+          automated
+        draft: false
+
+    - name: Sync Summary
+      if: always()
+      run: |
+        echo "### Main to Dev Sync Summary 🔄" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.check_dev.outputs.dev_exists }}" = "false" ]; then
+          echo "ℹ️ Dev branch does not exist - skipping sync" >> $GITHUB_STEP_SUMMARY
+        elif [ "${{ steps.check_changes.outputs.has_changes }}" = "true" ]; then
+          echo "✅ Sync PR created with ${{ steps.check_changes.outputs.diff_count }} commits" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ No changes to sync - branches are in sync" >> $GITHUB_STEP_SUMMARY
+        fi

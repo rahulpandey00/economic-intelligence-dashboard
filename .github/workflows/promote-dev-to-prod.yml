@@ -1,0 +1,161 @@
+name: Promote Dev to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_promotion:
+        description: 'Type "PROMOTE" to confirm promotion to production'
+        required: true
+        type: string
+
+jobs:
+  validate-promotion:
+    runs-on: ubuntu-latest
+    outputs:
+      should_promote: ${{ steps.validate.outputs.should_promote }}
+    
+    steps:
+    - name: Validate confirmation
+      id: validate
+      run: |
+        if [ "${{ github.event.inputs.confirm_promotion }}" = "PROMOTE" ]; then
+          echo "should_promote=true" >> $GITHUB_OUTPUT
+          echo "✅ Promotion confirmed"
+        else
+          echo "should_promote=false" >> $GITHUB_OUTPUT
+          echo "❌ Invalid confirmation. Please type 'PROMOTE' to confirm."
+          exit 1
+        fi
+
+  run-tests:
+    needs: validate-promotion
+    if: needs.validate-promotion.outputs.should_promote == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout dev branch
+      uses: actions/checkout@v4
+      with:
+        ref: dev
+        fetch-depth: 0
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-mock
+
+    - name: Create necessary directories
+      run: |
+        mkdir -p data/cache
+        mkdir -p tests
+
+    - name: Run tests before promotion
+      env:
+        DASHBOARD_ENV: production
+      run: |
+        echo "Running tests with production configuration..."
+        # Run tests but allow API-related failures (expected in CI without secrets)
+        python -m pytest tests/ -v --tb=short --ignore=tests/test_api_integration.py 2>&1 || {
+          exit_code=$?
+          # Check if failure is due to missing API keys (expected) vs actual test failures
+          echo "::warning::Some tests failed. Review logs to ensure failures are only due to missing API keys."
+          exit $exit_code
+        }
+
+    - name: Check code quality
+      run: |
+        python -m py_compile app.py
+        python -m py_compile modules/data_loader.py
+        
+        # Check all page files
+        for file in pages/*.py; do
+          echo "Checking $file"
+          python -m py_compile "$file" || echo "Warning: $file has syntax issues"
+        done
+        
+        # Check core modules
+        python -m py_compile modules/features/insider_trading_tracker.py
+        python -m py_compile modules/features/financial_health_scorer.py
+        python -m py_compile modules/features/sector_rotation_detector.py
+
+  create-promotion-pr:
+    needs: run-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check for differences
+      id: check_diff
+      run: |
+        git fetch origin main dev
+        DIFF_COUNT=$(git rev-list --count origin/main..origin/dev)
+        echo "diff_count=$DIFF_COUNT" >> $GITHUB_OUTPUT
+        
+        if [ "$DIFF_COUNT" -eq "0" ]; then
+          echo "No new commits to promote from dev to main"
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "$DIFF_COUNT commits to promote from dev to main"
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create Pull Request
+      if: steps.check_diff.outputs.has_changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        branch: promote/dev-to-main-${{ github.run_number }}
+        base: main
+        title: "🚀 Promote Dev to Production"
+        body: |
+          ## Promotion Summary
+          
+          This PR promotes changes from the `dev` branch to `main` (production).
+          
+          ### Changes Included
+          - Commits from dev branch that are not yet in main
+          
+          ### Pre-promotion Checklist
+          - [x] Tests passed on dev branch
+          - [x] Code quality checks passed
+          - [ ] Manual review completed
+          
+          ### Workflow Run
+          - Run ID: ${{ github.run_id }}
+          - Triggered by: @${{ github.actor }}
+          - Timestamp: ${{ github.event.repository.updated_at }}
+          
+          ---
+          ⚠️ **Please review the changes before merging to production.**
+        labels: |
+          promotion
+          production
+        draft: false
+
+    - name: Promotion Summary
+      if: always()
+      run: |
+        echo "### Dev to Production Promotion Summary 🚀" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered by:** @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        if [ "${{ steps.check_diff.outputs.has_changes }}" = "true" ]; then
+          echo "✅ Promotion PR created successfully" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "ℹ️ No changes to promote - dev and main are in sync" >> $GITHUB_STEP_SUMMARY
+        fi

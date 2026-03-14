@@ -1,0 +1,132 @@
+name: Daily Data Refresh
+
+on:
+  # Run daily at 6 AM UTC (1 AM EST / 10 PM PST)
+  schedule:
+    - cron: '0 6 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - development
+  
+  # Run on push to main or dev (for testing)
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'scripts/refresh_data.py'
+      - '.github/workflows/data-refresh.yml'
+
+jobs:
+  refresh-data:
+    runs-on: ubuntu-latest
+    env:
+      DASHBOARD_ENV: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'development') }}
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install requests[socks] PySocks  # For proxy support
+    
+    - name: Verify dependencies
+      run: |
+        python -c "import pandas; import yfinance; import pandas_datareader; print('Dependencies OK')"
+    
+    - name: Create cache directory
+      run: |
+        mkdir -p data/cache
+        mkdir -p data/backups
+    
+    - name: Run data refresh script
+      env:
+        # Add any API keys here as secrets
+        # FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        PYTHONUNBUFFERED: 1
+        DASHBOARD_ENV: ${{ env.DASHBOARD_ENV }}
+        # Optional: Use proxy for IP rotation (add to secrets)
+        # PROXY_URL: ${{ secrets.PROXY_URL }}
+        # Format: http://user:pass@proxy.example.com:8080
+      run: |
+        echo "Running data refresh for ${{ env.DASHBOARD_ENV }} environment"
+        python scripts/refresh_data.py
+    
+    - name: Check for data changes
+      id: check_changes
+      run: |
+        git add data/cache data/backups
+        if git diff --staged --quiet; then
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "No data changes detected"
+        else
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Data changes detected"
+        fi
+    
+    - name: Commit and push updated data
+      if: steps.check_changes.outputs.changes == 'true'
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add data/cache data/backups
+        git commit -m "chore: daily data refresh $(date +'%Y-%m-%d %H:%M UTC')"
+        git push
+    
+    - name: Upload cache as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: economic-data-cache-${{ github.run_number }}
+        path: |
+          data/cache/
+          data/backups/
+        retention-days: 30
+    
+    - name: Create summary
+      if: always()
+      run: |
+        echo "### Data Refresh Summary 📊" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Date:** $(date +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Environment:** ${{ env.DASHBOARD_ENV }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -f data/cache/fred_all_series.pkl ]; then
+          echo "✅ FRED data cache created" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ FRED data cache missing" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ -f data/cache/yfinance_all_tickers.pkl ]; then
+          echo "✅ Yahoo Finance data cache created" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Yahoo Finance data cache missing" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Backup files:**" >> $GITHUB_STEP_SUMMARY
+        ls -lh data/backups/ | tail -n 5 >> $GITHUB_STEP_SUMMARY || echo "No backups found"
+    
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "::error::Daily data refresh failed. Check logs for details."

@@ -1,0 +1,82 @@
+# DISABLED - Airflow deployment temporarily disabled
+# To re-enable, remove the '# DISABLED' prefix
+name: Deploy DAGs to Airflow (DISABLED)
+
+on:
+  # Disabled - uncomment to re-enable
+  # push:
+  #   branches: [ main ]
+  #   paths:
+  #     - 'airflow/dags/**'
+  
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Deploy to Airflow via SSH
+      if: ${{ secrets.AIRFLOW_SSH_HOST != '' }}
+      env:
+        SSH_HOST: ${{ secrets.AIRFLOW_SSH_HOST }}
+        SSH_USER: ${{ secrets.AIRFLOW_SSH_USER }}
+        SSH_KEY: ${{ secrets.AIRFLOW_SSH_KEY }}
+        AIRFLOW_DAGS_FOLDER: ${{ secrets.AIRFLOW_DAGS_FOLDER || '~/airflow/dags' }}
+      run: |
+        # Setup SSH
+        mkdir -p ~/.ssh
+        echo "$SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+        
+        # Copy DAG files to Airflow server
+        echo "Deploying DAGs to Airflow server..."
+        scp -i ~/.ssh/deploy_key -r airflow/dags/* \
+          ${SSH_USER}@${SSH_HOST}:${AIRFLOW_DAGS_FOLDER}/
+        
+        echo "✅ DAGs deployed successfully"
+        
+        # Cleanup
+        rm ~/.ssh/deploy_key
+    
+    - name: Deploy to Astronomer (if using Astronomer)
+      if: ${{ secrets.ASTRONOMER_API_KEY != '' }}
+      env:
+        ASTRONOMER_API_KEY: ${{ secrets.ASTRONOMER_API_KEY }}
+      run: |
+        # Install Astronomer CLI
+        curl -sSL install.astronomer.io | sudo bash -s
+        
+        # Deploy to Astronomer
+        astro deploy
+    
+    - name: Deploy to Google Cloud Composer (if using GCP)
+      if: ${{ secrets.GCP_COMPOSER_BUCKET != '' }}
+      env:
+        GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+        GCP_COMPOSER_BUCKET: ${{ secrets.GCP_COMPOSER_BUCKET }}
+      run: |
+        # Authenticate with GCP
+        echo "${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}" > /tmp/gcp-key.json
+        gcloud auth activate-service-account --key-file=/tmp/gcp-key.json
+        gcloud config set project $GCP_PROJECT
+        
+        # Upload DAGs to Cloud Composer bucket
+        gsutil -m rsync -r airflow/dags/ gs://${GCP_COMPOSER_BUCKET}/dags/
+        
+        echo "✅ DAGs deployed to Cloud Composer"
+    
+    - name: Notify on deployment
+      if: always()
+      run: |
+        echo "### Airflow DAG Deployment Summary 📦" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Timestamp:** $(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Deployed DAGs:**" >> $GITHUB_STEP_SUMMARY
+        ls -1 airflow/dags/*.py >> $GITHUB_STEP_SUMMARY

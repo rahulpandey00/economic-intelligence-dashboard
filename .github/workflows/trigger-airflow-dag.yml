@@ -1,0 +1,111 @@
+# DISABLED - Airflow triggers temporarily disabled
+# To re-enable, remove the '# DISABLED' prefix
+name: Trigger Airflow DAG (DISABLED)
+
+on:
+  # Disabled - uncomment to re-enable
+  # schedule:
+  #   - cron: '0 6 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      dag_id:
+        description: 'Airflow DAG ID to trigger'
+        required: false
+        default: 'economic_dashboard_data_refresh'
+      conf:
+        description: 'DAG configuration (JSON)'
+        required: false
+        default: '{}'
+
+jobs:
+  trigger-airflow:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Trigger Airflow DAG via API
+      env:
+        AIRFLOW_URL: ${{ secrets.AIRFLOW_URL }}  # e.g., https://your-airflow.com
+        AIRFLOW_USERNAME: ${{ secrets.AIRFLOW_USERNAME }}
+        AIRFLOW_PASSWORD: ${{ secrets.AIRFLOW_PASSWORD }}
+      run: |
+        DAG_ID="${{ github.event.inputs.dag_id || 'economic_dashboard_data_refresh' }}"
+        CONF="${{ github.event.inputs.conf || '{}' }}"
+        
+        echo "Triggering Airflow DAG: $DAG_ID"
+        
+        # Trigger DAG via Airflow REST API
+        RESPONSE=$(curl -X POST \
+          "${AIRFLOW_URL}/api/v1/dags/${DAG_ID}/dagRuns" \
+          -H "Content-Type: application/json" \
+          -u "${AIRFLOW_USERNAME}:${AIRFLOW_PASSWORD}" \
+          -d "{\"conf\": ${CONF}}" \
+          -w "\n%{http_code}" \
+          -s)
+        
+        HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+        BODY=$(echo "$RESPONSE" | head -n-1)
+        
+        echo "HTTP Status: $HTTP_CODE"
+        echo "Response: $BODY"
+        
+        if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+          echo "✅ DAG triggered successfully"
+          echo "dag_run_id=$(echo $BODY | jq -r '.dag_run_id')" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Failed to trigger DAG"
+          exit 1
+        fi
+    
+    - name: Monitor DAG execution (optional)
+      if: success()
+      env:
+        AIRFLOW_URL: ${{ secrets.AIRFLOW_URL }}
+        AIRFLOW_USERNAME: ${{ secrets.AIRFLOW_USERNAME }}
+        AIRFLOW_PASSWORD: ${{ secrets.AIRFLOW_PASSWORD }}
+      run: |
+        DAG_ID="${{ github.event.inputs.dag_id || 'economic_dashboard_data_refresh' }}"
+        
+        # Wait for DAG to complete (with timeout)
+        MAX_WAIT=1800  # 30 minutes
+        ELAPSED=0
+        INTERVAL=30
+        
+        echo "Monitoring DAG execution..."
+        
+        while [ $ELAPSED -lt $MAX_WAIT ]; do
+          sleep $INTERVAL
+          ELAPSED=$((ELAPSED + INTERVAL))
+          
+          # Get DAG run status
+          STATUS=$(curl -X GET \
+            "${AIRFLOW_URL}/api/v1/dags/${DAG_ID}/dagRuns" \
+            -H "Content-Type: application/json" \
+            -u "${AIRFLOW_USERNAME}:${AIRFLOW_PASSWORD}" \
+            -s | jq -r '.dag_runs[0].state')
+          
+          echo "Status after ${ELAPSED}s: $STATUS"
+          
+          if [ "$STATUS" = "success" ]; then
+            echo "✅ DAG completed successfully"
+            exit 0
+          elif [ "$STATUS" = "failed" ]; then
+            echo "❌ DAG failed"
+            exit 1
+          fi
+        done
+        
+        echo "⚠️ DAG still running after ${MAX_WAIT}s"
+        exit 0  # Don't fail if still running
+    
+    - name: Create summary
+      if: always()
+      run: |
+        echo "### Airflow DAG Trigger Summary 🚀" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**DAG ID:** ${{ github.event.inputs.dag_id || 'economic_dashboard_data_refresh' }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Triggered at:** $(date -u +'%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "View details in Airflow UI: ${AIRFLOW_URL}" >> $GITHUB_STEP_SUMMARY
