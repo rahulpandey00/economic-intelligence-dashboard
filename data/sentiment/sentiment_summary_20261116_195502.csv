@@ -1,0 +1,11 @@
+symbol,analyzed_at,article_count,average_sentiment,sentiment_trend,momentum,confidence,recommendation,positive_articles,negative_articles,neutral_articles
+AAPL,2026-11-16T19:55:02.667745,20,0.1141,slightly_bullish,-0.1219,0.8359,mixed_signals,8,0,12
+MSFT,2026-11-16T19:55:02.683768,20,0.1141,slightly_bullish,-0.0755,0.8359,mixed_signals,8,0,12
+GOOGL,2026-11-16T19:55:02.696951,20,0.1141,slightly_bullish,0.0352,0.8359,positive_momentum,8,0,12
+AMZN,2026-11-16T19:55:02.709287,20,0.1141,slightly_bullish,-0.062,0.8359,mixed_signals,8,0,12
+META,2026-11-16T19:55:02.721576,20,0.1141,slightly_bullish,-0.101,0.8359,mixed_signals,8,0,12
+NVDA,2026-11-16T19:55:02.733690,20,0.1141,slightly_bullish,-0.0867,0.8359,mixed_signals,8,0,12
+TSLA,2026-11-16T19:55:02.745922,20,0.1141,slightly_bullish,-0.0385,0.8359,mixed_signals,8,0,12
+JPM,2026-11-16T19:55:02.758205,20,0.1141,slightly_bullish,-0.0264,0.8359,mixed_signals,8,0,12
+V,2026-11-16T19:55:02.770418,20,0.1141,slightly_bullish,-0.1139,0.8359,mixed_signals,8,0,12
+JNJ,2026-11-16T19:55:02.783211,20,0.1141,slightly_bullish,0.0898,0.8359,positive_momentum,8,0,12
